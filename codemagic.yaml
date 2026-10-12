@@ -1,6 +1,6 @@
 workflows:
   ios-release:
-    name: Plat & Record - iOS
+    name: CasaPrice - iOS
     max_build_duration: 60
     instance_type: mac_mini_m2
     integrations:
@@ -53,6 +53,13 @@ workflows:
           fi
           npm install --no-save @capacitor/assets
           npx capacitor-assets generate --ios --assetPath assets
+      - name: Configure iOS (target 15, encryption flag, build number)
+        script: |
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '15.0'/" ios/App/Podfile
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = [0-9.]*;/IPHONEOS_DEPLOYMENT_TARGET = 15.0;/g" ios/App/App.xcodeproj/project.pbxproj
+          sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9]*;/CURRENT_PROJECT_VERSION = $BUILD_NUMBER;/g" ios/App/App.xcodeproj/project.pbxproj
+          /usr/libexec/PlistBuddy -c "Add :ITSAppUsesNonExemptEncryption bool false" ios/App/App/Info.plist || \
+            /usr/libexec/PlistBuddy -c "Set :ITSAppUsesNonExemptEncryption false" ios/App/App/Info.plist
       - name: Sync Capacitor
         script: npx cap sync ios
       - name: Install CocoaPods
@@ -72,5 +79,5 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        submit_to_testflight: false
         submit_to_app_store: false
