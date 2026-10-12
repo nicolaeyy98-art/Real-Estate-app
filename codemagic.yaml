@@ -1,0 +1,76 @@
+workflows:
+  ios-release:
+    name: Plat & Record - iOS
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: codemagic_asc
+    environment:
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.platandrecord.app
+      vars:
+        XCODE_WORKSPACE: "ios/App/App.xcworkspace"
+        XCODE_SCHEME: "App"
+      node: latest
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install npm dependencies
+        script: npm install
+      - name: Build web app
+        script: npm run build
+      - name: Add iOS platform if missing
+        script: |
+          if [ ! -d "ios" ]; then
+            npx cap add ios
+          fi
+      - name: Generate app icons and splash screens
+        script: |
+          mkdir -p assets
+          if [ ! -f resources/icon.png ]; then
+            pip3 install --quiet pillow
+            python3 - <<'PY'
+          from PIL import Image, ImageDraw, ImageFont
+          def font(size):
+              for f in ["/System/Library/Fonts/Supplemental/Georgia Bold.ttf","/System/Library/Fonts/Supplemental/Arial Bold.ttf"]:
+                  try: return ImageFont.truetype(f, size)
+                  except Exception: pass
+              return ImageFont.load_default()
+          def mark(size, bg, fg, fs):
+              im = Image.new("RGB", (size, size), bg)
+              d = ImageDraw.Draw(im)
+              d.text((size/2, size/2), "P", font=font(fs), fill=fg, anchor="mm")
+              return im
+          mark(1024, (107,212,234), (6,20,31), 700).save("assets/icon-only.png")
+          mark(2732, (10,20,32), (107,212,234), 500).save("assets/splash.png")
+          mark(2732, (10,20,32), (107,212,234), 500).save("assets/splash-dark.png")
+          PY
+          else
+            cp resources/icon.png assets/icon-only.png
+            cp resources/splash.png assets/splash.png
+            cp resources/splash.png assets/splash-dark.png
+          fi
+          npm install --no-save @capacitor/assets
+          npx capacitor-assets generate --ios --assetPath assets
+      - name: Sync Capacitor
+        script: npx cap sync ios
+      - name: Install CocoaPods
+        script: |
+          cd ios/App && pod install
+      - name: Set up code signing
+        script: |
+          xcode-project use-profiles
+      - name: Build ipa
+        script: |
+          xcode-project build-ipa \
+            --workspace "$XCODE_WORKSPACE" \
+            --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true
+        submit_to_app_store: false
