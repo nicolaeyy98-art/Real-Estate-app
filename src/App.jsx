@@ -143,77 +143,6 @@ function indexEstimate(queryText, sqm) {
   };
 }
 
-/* ---------- optional live listings (real current asking prices) ---------- */
-const ACTOR_ID = "unfenced-group~imobiliare-ro-scraper";
-
-function numField(item, pattern) {
-  for (const key of Object.keys(item)) {
-    if (pattern.test(key)) {
-      const v = item[key];
-      const n = typeof v === "number" ? v : parseFloat(String(v).replace(/[^\d.]/g, ""));
-      if (!isNaN(n) && n > 0) return n;
-    }
-  }
-  return null;
-}
-function textField(item, pattern) {
-  for (const key of Object.keys(item)) {
-    if (pattern.test(key) && typeof item[key] === "string" && item[key]) return item[key];
-  }
-  return null;
-}
-
-async function fetchLive(token, queryText, sqm) {
-  const norm = normalize(queryText);
-  const city = resolveCity(norm);
-  const slug = city ? city.slug : "bucuresti";
-  const hintWords = remainingWords(norm).filter((w) => w.length > 2 && !/^\d+$/.test(w) && !STREET_WORDS.has(w));
-  const hint = hintWords.join(" ");
-
-  const url = "https://api.apify.com/v2/actors/" + ACTOR_ID + "/run-sync-get-dataset-items?token=" + encodeURIComponent(token);
-  const response = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ offerType: "sell", propertyType: "apartamente", location: slug, maxItems: 60, fetchDetails: true }),
-  });
-  if (!response.ok) throw new Error("Apify error " + response.status);
-  const items = await response.json();
-  if (!Array.isArray(items) || items.length === 0) throw new Error("No listings");
-
-  const rows = items
-    .map((item) => {
-      const price = numField(item, /price/i);
-      const area = numField(item, /surface|usable|area|sqm|mp/i);
-      const address = textField(item, /street|address|location/i);
-      const ppsqm = price && area ? price / area : null;
-      return { price, area, address, ppsqm: ppsqm && ppsqm >= 300 && ppsqm <= 15000 ? ppsqm : null };
-    })
-    .filter((r) => r.price);
-  if (rows.length === 0) throw new Error("No prices");
-
-  let pool = rows;
-  let nearStreet = false;
-  if (hint) {
-    const filtered = rows.filter((r) => r.address && stripDiacritics(r.address).includes(hint));
-    if (filtered.length >= 3) {
-      pool = filtered;
-      nearStreet = true;
-    }
-  }
-
-  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
-  const ppsqmList = pool.map((r) => r.ppsqm).filter(Boolean);
-  const avgAsking = avg(pool.map((r) => r.price));
-  const perSqm = ppsqmList.length >= 3 ? avg(ppsqmList) : null;
-
-  return {
-    tier: "live", sqm, count: pool.length, scanned: rows.length, nearStreet,
-    perSqm, avgAsking, basis: perSqm ? "sqm" : "listing",
-    total: perSqm ? Math.round(perSqm * sqm) : Math.round(avgAsking),
-    place: city ? city.label : "Bucuresti",
-  };
-}
-
 /* =====================================================================
    FORMATTING + STORAGE
    ===================================================================== */
@@ -486,9 +415,7 @@ export default function App() {
   // persisted on this device
   const [saved, setSaved] = useState(() => loadJSON("par.saved", []));
   const [history, setHistory] = useState(() => loadJSON("par.history", []));
-  const [token, setToken] = useState(() => loadJSON("par.token", ""));
   const [rate, setRate] = useState(() => loadJSON("par.rate", "5.05"));
-  const [showToken, setShowToken] = useState(false);
 
   // explore
   const [exploreView, setExploreView] = useState("cities");
@@ -501,7 +428,6 @@ export default function App() {
 
   useEffect(() => saveJSON("par.saved", saved), [saved]);
   useEffect(() => saveJSON("par.history", history), [history]);
-  useEffect(() => saveJSON("par.token", token), [token]);
   useEffect(() => saveJSON("par.rate", rate), [rate]);
 
   const rateNum = parseFloat(rate) > 0 ? parseFloat(rate) : 5.05;
@@ -524,18 +450,7 @@ export default function App() {
     setAddress(text);
     pushHistory(text);
 
-    let res = null;
-    if (token.trim()) {
-      try {
-        res = await fetchLive(token.trim(), text, sqm);
-      } catch (err) {
-        res = null;
-      }
-    }
-    if (!res) {
-      res = indexEstimate(text, sqm);
-      if (token.trim()) res.liveFailed = true;
-    }
+    const res = indexEstimate(text, sqm);
     setResult(res);
     setStatus("done");
     setStampKey((k) => k + 1);
@@ -567,10 +482,10 @@ export default function App() {
 
   async function shareCurrent() {
     if (!result) return;
-    const text = address + ": about " + formatEUR(result.total) + " (" + result.sqm + " sqm) — estimate from Plat & Record";
+    const text = address + ": about " + formatEUR(result.total) + " (" + result.sqm + " sqm) — estimate from CasaPrice";
     try {
       if (navigator.share) {
-        await navigator.share({ title: "Plat & Record", text });
+        await navigator.share({ title: "CasaPrice", text });
         return;
       }
       await navigator.clipboard.writeText(text);
@@ -644,7 +559,7 @@ export default function App() {
       return (
         <div className="par-ledger par-empty">
           <div className="par-empty-title">Pulling data…</div>
-          <div className="par-empty-text">Checking live listings first, then the price index.</div>
+          <div className="par-empty-text">Looking up the price index.</div>
         </div>
       );
     }
@@ -669,7 +584,6 @@ export default function App() {
           </span>
         )}
         <div className="par-l-sub">
-          {result.liveFailed && "Live listings weren't available for this search, so this is the price-index estimate instead. "}
           {result.tier === "neighborhood" && "Matched to this district using published price bands — directional, not an exact index."}
           {result.tier === "city" && "Based on the published " + result.cityLabel + " city average (" + result.source + "). Add a district for a finer estimate where available."}
           {result.tier === "national" && "No city recognized, so this uses the national average (" + result.source + ")."}
@@ -835,7 +749,7 @@ export default function App() {
         <div className="par-top">
           <div className="par-brand">
             <div className="par-mark">P</div>
-            <div className="par-brand-name">Plat &amp; Record</div>
+            <div className="par-brand-name">CasaPrice</div>
           </div>
           <button className="par-iconbtn" aria-label="Settings" onClick={() => setSettingsOpen(true)}>
             <Icon d={ICONS.sliders} size={20} />
@@ -876,32 +790,13 @@ export default function App() {
               <div className="par-help">Used for the RON figures under prices. It's an approximation — update it to today's rate if you need precision.</div>
             </div>
 
-            <div className="par-field">
-              <div className="par-label">Live listings (optional)</div>
-              <div className="par-row" style={{ marginBottom: 0 }}>
-                <input
-                  className="par-input"
-                  type={showToken ? "text" : "password"}
-                  placeholder="Apify API token"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                  autoCapitalize="off"
-                  autoCorrect="off"
-                />
-                <button className="par-btn par-btn-ghost" type="button" onClick={() => setShowToken((s) => !s)}>{showToken ? "Hide" : "Show"}</button>
-              </div>
-              <div className="par-help">
-                Add your own free Apify token (console.apify.com → Settings → API &amp; Integrations) to use real current
-                listings from Imobiliare.ro instead of the price index. If a live search fails, the app falls back to the index automatically.
-              </div>
-            </div>
-
             <div className="par-field" style={{ display: "flex", gap: 8 }}>
               <button className="par-btn par-btn-danger" style={{ flex: 1 }} onClick={() => { setHistory([]); showToast("History cleared"); }}>Clear history</button>
               <button className="par-btn par-btn-danger" style={{ flex: 1 }} onClick={() => { setSaved([]); showToast("Saved list cleared"); }}>Clear saved</button>
             </div>
 
             <button className="par-btn" style={{ width: "100%" }} onClick={() => setSettingsOpen(false)}>Done</button>
+            <p className="par-note"><a href="/privacy.html" target="_blank" rel="noopener noreferrer" style={{ color: "inherit" }}>Privacy policy</a></p>
             <p className="par-note">Made by Popescu Nicolae</p>
           </div>
         </div>
