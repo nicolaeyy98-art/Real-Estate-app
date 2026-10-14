@@ -655,7 +655,7 @@ export default function App() {
         <button className={exploreView === "cluj-napoca" ? "on" : ""} onClick={() => setExploreView("cluj-napoca")}>Cluj-Napoca</button>
       </div>
       <div className="par-card">
-        {exploreRows.avg && <div className="par-legend"><i /> city average {formatEUR(exploreRows.avg)}/sqm</div>}
+        {exploreRows.avg && <div className="par-legend">City average {formatEUR(exploreRows.avg)}/sqm</div>}
         {exploreRows.rows.map((r, idx) => (
           <button key={r.key} className="par-bar-row" onClick={() => openEstimate(r.open)}>
             <div className="par-bar-head">
@@ -663,8 +663,7 @@ export default function App() {
               <div className="par-bar-val">{formatEUR(r.price)}</div>
             </div>
             <div className="par-bar-track">
-              <div className="par-bar-fill" style={{ width: (r.price / exploreMax) * 100 + "%" }} />
-              {exploreRows.avg && <div className="par-bar-tick" style={{ left: "calc(" + (exploreRows.avg / exploreMax) * 100 + "% - 1px)" }} />}
+              <div className="par-bar-fill" style={{ width: (r.price / exploreMax) * 100 + "%" }} />  
             </div>
           </button>
         ))}
